@@ -1,0 +1,11 @@
+apiVersion: v1
+kind: ConfigMap
+metadata:
+  name: extra-dashboards
+  labels:
+    grafana_dashboard: "true"
+data:
+  custom-dashboard.json: |-
+{{ .Files.Get "dashboards/custom-dashboard.json" | indent 4 }}
+  nginx-ingress-controller.json: |-
+{{ .Files.Get "dashboards/nginx-ingress-controller.json" | indent 4 }}

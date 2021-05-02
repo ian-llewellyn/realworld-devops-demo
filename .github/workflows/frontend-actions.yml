@@ -1,0 +1,96 @@
+name: Docker Image CI - Frontend
+
+on:
+  push:
+    branches: [ main ]
+    paths:
+    - 'frontend/**'
+    - '.github/workflows/frontend-actions.yml'
+  pull_request:
+    branches: [ main ]
+    paths:
+    - 'frontend/**'
+    - '.github/workflows/frontend-actions.yml'
+
+jobs:
+  build:
+    runs-on: ubuntu-latest
+    steps:
+    -
+      name: Login to DockerHub
+      uses: docker/login-action@v1 
+      with:
+        username: ${{ secrets.DOCKERHUB_USERNAME }}
+        password: ${{ secrets.DOCKERHUB_TOKEN }}
+    -
+      name: Checkout repo
+      uses: actions/checkout@v2
+    -
+      name: Get version for tag
+      run: |
+        echo "NEW_VERSION=$(cat frontend/version.txt)" >> $GITHUB_ENV
+    -
+      name: Build and push Docker images
+      uses: docker/build-push-action@v2.3.0
+      id: docker_build
+      with:
+        context: frontend
+        push: true
+        tags: |
+          ${{ secrets.DOCKERHUB_USERNAME }}/realworld-ui:${{ env.NEW_VERSION }}
+          ${{ secrets.DOCKERHUB_USERNAME }}/realworld-ui:latest
+    -
+      name: Image digest
+      run: echo ${{ steps.docker_build.outputs.digest }}
+  test:
+    runs-on: ubuntu-latest
+    needs: build
+    steps:
+    -
+      name: Checkout repo
+      uses: actions/checkout@v2
+    -
+      name: Pull, Run, Test
+      run: |
+        cd frontend
+        export NEW_VERSION=$(cat version.txt)
+        docker run -p 8000:443 -d ${{ secrets.DOCKERHUB_USERNAME }}/realworld-ui:$NEW_VERSION
+        echo "Sleeping for 53 seconds for app init..." && sleep 53
+        curl -i http://localhost:8000/
+  deploy:
+    runs-on: ubuntu-latest
+    needs: test
+    steps:
+    -
+      name: Checkout repo
+      uses: actions/checkout@v2
+    -
+      name: Install kubectl
+      uses: yokawasa/action-setup-kube-tools@v0.7.1
+      with:
+        kubectl: "1.19.10"
+    -
+      name: Load kubectl configuration
+      run: |
+        mkdir ~/.kube/
+        cat <<EOF | base64 -d > ~/.kube/config
+        ${{ secrets.KUBE_CONFIG_DATA }}
+        EOF
+    -
+      name: Configure AWS Credentials
+      uses: aws-actions/configure-aws-credentials@v1
+      with:
+        aws-access-key-id: ${{ secrets.AWS_ACCESS_KEY_ID }}
+        aws-secret-access-key: ${{ secrets.AWS_SECRET_ACCESS_KEY }}
+        aws-region: ${{ secrets.AWS_REGION }}
+    -
+      name: Rollout new deployment image
+      run: |
+        cd frontend
+        kubectl version
+        export NEW_VERSION=$(cat version.txt)
+        kubectl set image deployment ui-frontend frontend=${{ secrets.DOCKERHUB_USERNAME }}/realworld-ui:$NEW_VERSION
+    -
+      name: Monitor deployment progress
+      run: |
+        kubectl rollout status deployment ui-frontend -w

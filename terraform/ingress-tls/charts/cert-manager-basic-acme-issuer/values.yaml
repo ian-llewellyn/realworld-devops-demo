@@ -1,0 +1,4 @@
+email: "your_email@example.com"
+domain: "example.com"
+issuerName: "letsencrypt-staging"
+staging: false

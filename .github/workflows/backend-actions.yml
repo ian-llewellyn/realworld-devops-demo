@@ -1,0 +1,100 @@
+name: Docker Image CI - Backend
+
+on:
+  push:
+    branches: [ main ]
+    paths:
+    - 'backend/**'
+    - '.github/workflows/backend-actions.yml'
+  pull_request:
+    branches: [ main ]
+    paths:
+    - 'backend/**'
+    - '.github/workflows/backend-actions.yml'
+
+jobs:
+  build:
+    runs-on: ubuntu-latest
+    steps:
+    -
+      name: Login to DockerHub
+      uses: docker/login-action@v1 
+      with:
+        username: ${{ secrets.DOCKERHUB_USERNAME }}
+        password: ${{ secrets.DOCKERHUB_TOKEN }}
+    -
+      name: Checkout repo
+      uses: actions/checkout@v2
+    -
+      name: Get version for tag
+      run: |
+        echo "NEW_VERSION=$(cat backend/version.txt)" >> $GITHUB_ENV
+    -
+      name: Build and push Docker images
+      uses: docker/build-push-action@v2.3.0
+      id: docker_build
+      with:
+        context: backend
+        push: true
+        tags: |
+          ${{ secrets.DOCKERHUB_USERNAME }}/realworld-api:${{ env.NEW_VERSION }}
+          ${{ secrets.DOCKERHUB_USERNAME }}/realworld-api:latest
+    -
+      name: Image digest
+      run: echo ${{ steps.docker_build.outputs.digest }}
+  test:
+    runs-on: ubuntu-latest
+    needs: build
+    steps:
+    -
+      name: Checkout repo
+      uses: actions/checkout@v2
+    -
+      name: Transmogrify docker-compose.yml
+      run: |
+        cd backend
+        mv .env.example .env
+        export NEW_VERSION=$(cat version.txt)
+        sed -i "s|build: .*|image: ${{ secrets.DOCKERHUB_USERNAME }}/realworld-api:$NEW_VERSION|" docker-compose.yml
+        docker-compose up -d db
+        echo "Sleeping for 28 seconds for db init..." && sleep 28
+        docker-compose up -d app
+        echo "Sleeping for 17 seconds for app init..." && sleep 17
+        curl -i http://localhost:8000/api/articles
+  deploy:
+    runs-on: ubuntu-latest
+    needs: test
+    steps:
+    -
+      name: Checkout repo
+      uses: actions/checkout@v2
+    -
+      name: Install kubectl
+      uses: yokawasa/action-setup-kube-tools@v0.7.1
+      with:
+        kubectl: "1.19.10"
+    -
+      name: Load kubectl configuration
+      run: |
+        mkdir ~/.kube/
+        cat <<EOF | base64 -d > ~/.kube/config
+        ${{ secrets.KUBE_CONFIG_DATA }}
+        EOF
+    -
+      name: Configure AWS Credentials
+      uses: aws-actions/configure-aws-credentials@v1
+      with:
+        aws-access-key-id: ${{ secrets.AWS_ACCESS_KEY_ID }}
+        aws-secret-access-key: ${{ secrets.AWS_SECRET_ACCESS_KEY }}
+        aws-region: ${{ secrets.AWS_REGION }}
+    -
+      name: Rollout new deployment image
+      run: |
+        cd backend
+        kubectl version
+        export NEW_VERSION=$(cat version.txt)
+        kubectl set image deployment api-backend backend=${{ secrets.DOCKERHUB_USERNAME }}/realworld-api:$NEW_VERSION
+    -
+      name: Monitor deployment progress
+      run: |
+        kubectl rollout status deployment api-backend -w

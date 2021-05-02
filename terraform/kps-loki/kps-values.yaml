@@ -1,0 +1,50 @@
+## Using default values from https://github.com/grafana/helm-charts/blob/main/charts/grafana/values.yaml
+##
+grafana:
+  ingress:
+    ## If true, Grafana Ingress will be created
+    ##
+    enabled: true
+
+    ## Annotations for Grafana Ingress
+    ##
+    annotations:
+      kubernetes.io/ingress.class: nginx
+      kubernetes.io/tls-acme: "true"
+
+  persistence:
+    enabled: true
+    size: 1Gi
+
+  ## Configure additional grafana datasources (passed through tpl)
+  ## ref: http://docs.grafana.org/administration/provisioning/#datasources
+  additionalDataSources:
+  - name: Loki
+    access: proxy
+    #basicAuth: true
+    #basicAuthPassword: pass
+    #basicAuthUser: daco
+    #editable: false
+    #jsonData:
+    #    tlsSkipVerify: true
+    #orgId: 1
+    type: loki
+    url: http://loki:3100
+    version: 1
+
+prometheus:
+  prometheusSpec:
+    storageSpec:
+      volumeClaimTemplate:
+        spec:
+          #storageClassName: gp2
+          #accessModes: ["ReadWriteOnce"]
+          resources:
+            requests:
+              storage: 5Gi
+
+## Deploy node exporter as a daemonset to all nodes
+##
+nodeExporter:
+  # Default is true
+  enabled: false

@@ -1,0 +1,8 @@
+loki:
+  persistence:
+    enabled: true
+    size: 5Gi
+  serviceMonitor:
+    enabled: true
+    additionalLabels:
+      release: kps

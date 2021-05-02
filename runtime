@@ -1,0 +1,104 @@
+#!/bin/bash
+set -e
+
+usage() {
+cat <<EOF
+Usage: $(basename $0) <command> [arguments]
+
+Commands:
+	start   Start the production cluster.
+	stop    Stop the production cluster.
+	scale   Scale the production workload.
+        backup  Backup cluster PVs to AWS Backup vault.
+
+Arguments:
+	When <command> is 'scale', two arguments are required:
+	scale <tier> <replicas>
+
+	tier      One of 'backend' or 'frontend'.
+	replicas  The number of replicas requested.
+
+	When <command> is 'backup', there is one optional argument:
+
+	region    The AWS region to search for and backup PVs. Default: us-west-2
+
+EOF
+}
+
+needs() {
+  ret=0
+  for cmd in $*; do
+    if ! which $cmd > /dev/null; then
+      echo "Please install '$cmd' and re-run."
+      ret=1
+    fi
+  done
+  return $ret
+}
+
+if [ $# -lt 1 ]; then
+  usage >&2
+  exit 1
+fi
+
+SCRIPT_DIR=$(dirname $0)
+
+COMMAND="$1"
+
+case "$COMMAND" in
+  start)
+    needs aws terraform
+    # Confirm AWS is setup and operational
+    aws sts get-caller-identity > /dev/null 
+    pushd $SCRIPT_DIR/terraform &> /dev/null
+    trap "popd &> /dev/null" EXIT
+    terraform init
+    terraform apply
+    ;;
+
+  stop)
+    needs aws terraform
+    echo "You may have to purge some backups from the vault for terraform to complete successfully"
+    echo "Proceeding in 3 seconds..."
+    sleep 3
+    pushd $SCRIPT_DIR/terraform &> /dev/null
+    trap "popd &> /dev/null" EXIT
+    terraform destroy
+    ;;
+
+  scale)
+    if [ $# -ne 3 ]; then
+      usage >&2
+      exit 1
+    fi
+
+    needs aws kubectl
+
+    TIER="$2"
+    case $TIER in
+      frontend)
+	      DEPLOYMENT="ui-frontend"
+	      ;;
+
+      backend)
+	      DEPLOYMENT="api-backend"
+	      ;;
+
+      *)
+	      usage >&2
+	      exit 1
+    esac
+
+    REPLICAS="$3"
+    kubectl scale deployment $DEPLOYMENT --replicas="$REPLICAS"
+    ;;
+
+  backup)
+    $SCRIPT_DIR/backup $2
+    ;;
+
+  *)
+    usage >&2
+    exit 1
+    ;;
+esac

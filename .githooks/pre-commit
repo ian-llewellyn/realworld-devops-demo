@@ -1,0 +1,29 @@
+#!/bin/bash
+set -e
+
+version_bump() {
+  local TIER=$1
+
+  # frontend/version.txt - docker build will reference this
+  VERSION_FILE=$TIER/version.txt
+  CURRENT_VER=$(cat $VERSION_FILE)
+  NEW_VER=$(echo $CURRENT_VER | awk -F. '{$NF+=1; OFS="."; print $0}' | tr ' ' '.')
+  echo "Bumping $TIER version to: $NEW_VER"
+  echo $NEW_VER > $VERSION_FILE
+
+  # terraform/workload/charts/frontend/Chart.yaml:appVersion - helm install will reference this
+  CHART_FILE=terraform/workload/charts/$TIER/Chart.yaml
+  sed -i "s/^appVersion: \"\(.*\)\"$/appVersion: \"$NEW_VER\"/" $CHART_FILE
+
+  # Locking chart version and app version together for convenience -
+  # this can pose problems in the right circumstances
+  sed -i "s/^version: \(.*\)$/version: $NEW_VER/" $CHART_FILE
+
+  git add $VERSION_FILE $CHART_FILE
+}
+
+for tier in frontend backend; do
+  if [ -n "$(git diff --cached --name-status $tier/)" ]; then
+    version_bump $tier
+  fi
+done

@@ -1,0 +1,62 @@
+#!/bin/bash
+set -e
+
+usage() {
+  cat <<EOF
+Uasge: $(basename $0) [region]
+
+Arguments:
+	region  The AWS region that is searched for cluster PVs and the region in
+	        which the backups will be saved.
+
+EOF
+}
+
+needs() {
+  ret=0
+  for cmd in $*; do
+    if ! which $cmd > /dev/null; then
+      echo "Please install '$cmd' and re-run."
+      ret=1
+    fi
+  done
+  return $ret
+}
+
+case $1 in
+  -h|--help|help)
+    usage
+    exit
+    ;;
+
+  *)
+    REGION=${1:-us-west-2}
+    ;;
+esac
+
+needs aws jq tr
+
+ACCOUNT_ID=$(aws sts get-caller-identity \
+  --region $REGION \
+  --output json | jq '.Account' | tr -d '"')
+IAM_ROLE_ARN="arn:aws:iam::$ACCOUNT_ID:role/k8s_pv_backup_role"
+
+function backup_ebs() {
+    VOLUMES=$(aws ec2 describe-volumes \
+      --region $REGION \
+      --filter Name=tag:kubernetes.io/created-for/pvc/namespace,Values=default \
+      --output json | jq '.Volumes[].VolumeId' | tr -d '"')
+
+    for volume in $VOLUMES; do
+      volume_arn="arn:aws:ec2:$REGION:$ACCOUNT_ID:volume/$volume"
+      echo "Creating backup for volume: $volume "
+      aws backup start-backup-job \
+        --region $REGION \
+        --backup-vault-name k8s_pv_default_ns \
+        --resource-arn $volume_arn \
+        --iam-role-arn $IAM_ROLE_ARN
+      echo
+    done
+}
+ 
+backup_ebs
